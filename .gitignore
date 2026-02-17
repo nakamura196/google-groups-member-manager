@@ -1,0 +1,15 @@
+# OAuth クライアントシークレット
+client_secret*.json
+
+# サービスアカウント鍵ファイル
+*-*.json
+!*.example.json
+
+# OAuth トークン
+*.pickle
+
+# 環境変数
+.env
+
+# 実際のメンバーリスト
+list.txt
