@@ -10,6 +10,7 @@ Google Groups メンバー一括入れ替えスクリプト
 初回実行時にブラウザが開き、Google アカウントでの認証を求められる。
 """
 
+import argparse
 import os
 import re
 import sys
@@ -65,32 +66,8 @@ def parse_member_list(filepath):
     return emails
 
 
-def main():
-    if not GROUP_EMAIL:
-        print("エラー: 環境変数 GROUP_EMAIL を設定してください。")
-        print("  例: GROUP_EMAIL=your-group@example.com python3 manage_members.py")
-        sys.exit(1)
-
-    new_members = parse_member_list(LIST_FILE)
-    if not new_members:
-        print("エラー: list.txt にメールアドレスが見つかりません。")
-        sys.exit(1)
-
-    print(f"対象グループ: {GROUP_EMAIL}")
-    print(f"新メンバー数: {len(new_members)}")
-    for email in new_members:
-        print(f"  {email}")
-
-    print("\n認証中...")
-    creds = get_credentials()
-    service = build('cloudidentity', 'v1', credentials=creds)
-
-    # グループを検索
-    result = service.groups().lookup(groupKey_id=GROUP_EMAIL).execute()
-    group_name = result['name']
-
-    # 現在のメンバー一覧を取得
-    print("\n=== 現在のメンバー取得中 ===")
+def get_all_memberships(service, group_name):
+    """グループの全メンバーシップを取得する。"""
     all_memberships = []
     page_token = None
     while True:
@@ -102,6 +79,44 @@ def main():
         page_token = resp.get('nextPageToken')
         if not page_token:
             break
+    return all_memberships
+
+
+def cmd_list(service, group_name, output_file):
+    """現在のメンバー一覧を表示し、オプションでファイルに出力する。"""
+    print("=== 現在のメンバー取得中 ===")
+    all_memberships = get_all_memberships(service, group_name)
+
+    emails = []
+    for m in all_memberships:
+        email = m.get('preferredMemberKey', {}).get('id', '?')
+        roles = [r.get('name', '') for r in m.get('roles', [])]
+        print(f"  {email} - {', '.join(roles)}")
+        emails.append(email)
+
+    print(f"\n合計: {len(emails)}名")
+
+    if output_file:
+        with open(output_file, 'w', encoding='utf-8') as f:
+            for email in emails:
+                f.write(email + '\n')
+        print(f"\n出力先: {output_file}")
+
+
+def cmd_replace(service, group_name):
+    """メンバーを入れ替える（従来の動作）。"""
+    new_members = parse_member_list(LIST_FILE)
+    if not new_members:
+        print("エラー: list.txt にメールアドレスが見つかりません。")
+        sys.exit(1)
+
+    print(f"新メンバー数: {len(new_members)}")
+    for email in new_members:
+        print(f"  {email}")
+
+    # 現在のメンバー一覧を取得
+    print("\n=== 現在のメンバー取得中 ===")
+    all_memberships = get_all_memberships(service, group_name)
 
     for m in all_memberships:
         email = m.get('preferredMemberKey', {}).get('id', '?')
@@ -154,22 +169,48 @@ def main():
 
     # 最終確認
     print("\n=== 最終メンバー一覧 ===")
-    page_token = None
-    count = 0
-    while True:
-        kwargs = {'parent': group_name}
-        if page_token:
-            kwargs['pageToken'] = page_token
-        resp = service.groups().memberships().list(**kwargs).execute()
-        for m in resp.get('memberships', []):
-            email = m.get('preferredMemberKey', {}).get('id', '')
-            roles = [r.get('name', '') for r in m.get('roles', [])]
-            print(f"  {email} - {', '.join(roles)}")
-            count += 1
-        page_token = resp.get('nextPageToken')
-        if not page_token:
-            break
-    print(f"\n合計: {count}名")
+    final_memberships = get_all_memberships(service, group_name)
+    for m in final_memberships:
+        email = m.get('preferredMemberKey', {}).get('id', '')
+        roles = [r.get('name', '') for r in m.get('roles', [])]
+        print(f"  {email} - {', '.join(roles)}")
+    print(f"\n合計: {len(final_memberships)}名")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Google Groups メンバー一括管理ツール')
+    sub = parser.add_subparsers(dest='command')
+
+    # list サブコマンド
+    list_parser = sub.add_parser('list', help='現在のメンバー一覧を表示・出力')
+    list_parser.add_argument('-o', '--output', help='出力先ファイルパス')
+
+    # replace サブコマンド
+    sub.add_parser('replace', help='list.txt に基づきメンバーを入れ替え')
+
+    args = parser.parse_args()
+
+    if not GROUP_EMAIL:
+        print("エラー: 環境変数 GROUP_EMAIL を設定してください。")
+        print("  例: GROUP_EMAIL=replace@hi.u-tokyo.ac.jp python3 manage_members.py list")
+        sys.exit(1)
+
+    # デフォルトは replace（後方互換性）
+    command = args.command or 'replace'
+
+    print(f"対象グループ: {GROUP_EMAIL}")
+    print("認証中...")
+    creds = get_credentials()
+    service = build('cloudidentity', 'v1', credentials=creds)
+
+    # グループを検索
+    result = service.groups().lookup(groupKey_id=GROUP_EMAIL).execute()
+    group_name = result['name']
+
+    if command == 'list':
+        cmd_list(service, group_name, args.output)
+    else:
+        cmd_replace(service, group_name)
 
 
 if __name__ == '__main__':

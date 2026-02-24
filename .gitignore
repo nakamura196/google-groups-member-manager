@@ -13,3 +13,4 @@ client_secret*.json
 
 # 実際のメンバーリスト
 list.txt
+members.txt
